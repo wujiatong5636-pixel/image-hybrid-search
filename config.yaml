@@ -1,0 +1,71 @@
+# ===== 混合图片检索系统配置 =====
+
+clip:
+  # 推理后端: "onnx" | "openclip"
+  backend: "openclip"
+  # ONNX 模型标识（modern-onnx-clip 支持的模型名）
+  onnx_model: "openai/clip-vit-base-patch32"
+  # OpenCLIP 模型配置
+  openclip_model: "ViT-B-32"
+  openclip_pretrained: "laion2b_s34b_b79k"
+  # 向量维度（ViT-B/32 = 512）
+  embedding_dim: 512
+  # 推理设备: "cpu" | "cuda"
+  device: "cpu"
+
+vector_store:
+  # 索引类型: "flat" (IndexFlatIP) | "ivf" (IndexIVFFlat)
+  index_type: "flat"
+  # IVF 聚类中心数（仅 ivf 模式生效，建议 sqrt(N)）
+  nlist: 100
+  # IVF 查询时探测的聚类数
+  nprobe: 10
+  # 索引文件持久化路径
+  index_path: "data/faiss_index.bin"
+  # 图片路径映射文件路径
+  mapping_path: "data/id_to_path.json"
+
+google_vision:
+  # 是否启用 Google Vision
+  enabled: true
+  # Google Cloud 服务账号 JSON 密钥路径
+  credentials_path: "C:/projects/baidu_similarity_finder/gcp-key.json"
+  # Web Detection 每月免费额度
+  free_quota_per_month: 1000
+  # 超量单价（美元/千次）
+  price_per_1k: 3.50
+  # 代理配置（国内访问需要），留空则不使用代理
+  proxy:
+    http: "http://127.0.0.1:7890"
+    https: "http://127.0.0.1:7890"
+  # 超时（秒）
+  timeout: 30
+
+fusion:
+  # 融合策略: "weighted" | "rrf"
+  strategy: "weighted"
+  # 加权求和权重（仅 weighted 模式生效，三者之和应为 1.0）
+  weights:
+    vision: 0.3
+    clip_image: 0.5
+    clip_text: 0.2
+  # RRF 常数 k（仅 rrf 模式生效，通常 60）
+  rrf_k: 60
+  # 每路返回的候选数量
+  top_k_per_source: 20
+  # 最终返回数量
+  final_top_k: 10
+
+rate_limiter:
+  # 每月最大调用次数（免费额度）
+  max_per_month: 1000
+  # 告警阈值（达到该比例时降级到纯 CLIP）
+  alert_threshold: 0.8
+  # 用量记录持久化路径
+  usage_path: "data/vision_usage.json"
+
+search:
+  # CLIP 文本检索的默认候选数
+  clip_text_top_k: 20
+  # CLIP 图像检索的默认候选数
+  clip_image_top_k: 20

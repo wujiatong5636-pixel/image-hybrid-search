@@ -1,0 +1,22 @@
+# ===== 核心依赖 =====
+numpy>=1.24.0
+Pillow>=10.0.0
+PyYAML>=6.0
+
+# ===== CLIP 推理（二选一，或都装） =====
+# 方案A：OpenCLIP（开发测试，有 GPU 更佳）
+open-clip-torch>=2.20.0
+# 方案B：ONNX Runtime（生产 CPU 部署，轻量）
+onnxruntime>=1.16.0
+modern-onnx-clip>=0.2.0
+
+# ===== 向量数据库 =====
+faiss-cpu>=1.7.4
+# faiss-gpu>=1.7.2  # 有 GPU 时替换 faiss-cpu
+
+# ===== Google Vision =====
+google-cloud-vision>=3.4.0
+
+# ===== 工具 =====
+tqdm>=4.65.0
+requests>=2.31.0

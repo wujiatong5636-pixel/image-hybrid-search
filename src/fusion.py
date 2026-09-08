@@ -2,11 +2,11 @@
 融合排序模块
 支持两种融合策略：
   1. 加权求和（weighted）：对各路分数归一化后加权求和，适合分数质量稳定的场景
-  2. RRF 倒数排名融合（rrf）：基于排名而非绝对分值，适合异构结果（Vision 无分值 vs CLIP 有分值）
+  2. RRF 倒数排名融合（rrf）：基于排名而非绝对分值，适合不同候选来源
 
 统一输入格式：
   每路结果为 [(doc_id, score), ...]，按分数降序排列。
-  对于无分值的结果（如 Vision URL 列表），score 可传 0，排名由位置决定。
+  对于无分值的候选列表，score可传0，排名由位置决定。
 """
 
 import logging
@@ -31,12 +31,12 @@ class FusionEngine:
         """
         Args:
             strategy: "weighted" 或 "rrf"
-            weights: 各通道权重 {"vision": 0.3, "clip_image": 0.5, "clip_text": 0.2}
+            weights: 各候选通道权重，例如{"clip_image": 1.0}
             rrf_k: RRF 常数 k，通常取 60
             final_top_k: 最终返回数量
         """
         self.strategy = strategy.lower()
-        self.weights = weights or {"vision": 0.3, "clip_image": 0.5, "clip_text": 0.2}
+        self.weights = weights or {"clip_image": 1.0}
         self.rrf_k = rrf_k
         self.final_top_k = final_top_k
 
@@ -140,7 +140,7 @@ class FusionEngine:
         优势：
           - 无需归一化分数
           - 对绝对分值不敏感
-          - 适合异构结果（Vision 无分值 vs CLIP 有分值）
+          - 适合分值量纲不同的候选来源
         """
         # 收集所有 doc_id
         all_docs = set()

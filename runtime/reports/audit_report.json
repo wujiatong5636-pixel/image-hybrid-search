@@ -1,0 +1,42 @@
+{
+  "passed": true,
+  "sample_count": 10,
+  "completed_count": 10,
+  "result_count": 30,
+  "unique_candidate_count": 30,
+  "errors": [],
+  "warnings": [],
+  "group_stats": {
+    "A": {
+      "count": 10,
+      "semantic_mean": 0.741269,
+      "composition_mean": 0.623455,
+      "shape_mean": 0.436839,
+      "color_mean": 0.789983,
+      "texture_mean": 0.99668,
+      "multi_feature_mean": 0.549849
+    },
+    "B": {
+      "count": 10,
+      "semantic_mean": 0.689409,
+      "composition_mean": 0.398849,
+      "shape_mean": 0.380916,
+      "color_mean": 0.760562,
+      "texture_mean": 0.996455,
+      "multi_feature_mean": 0.576021
+    },
+    "C": {
+      "count": 10,
+      "semantic_mean": 0.678831,
+      "composition_mean": 0.526087,
+      "shape_mean": 0.424173,
+      "color_mean": 0.7079,
+      "texture_mean": 0.99691,
+      "multi_feature_mean": 0.568353
+    }
+  },
+  "score_calibrated": false,
+  "score_note": "当前CLIP与多维分数用于排序，尚不能解释为80%-95%的真实概率。",
+  "audited_at": "2026-09-08T14:36:53",
+  "task_file": "C:\\Users\\mozhihao\\core\\image-hybrid-search\\runtime\\tasks\\batch_task.json"
+}

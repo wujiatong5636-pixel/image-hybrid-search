@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "updated_at": "2026-09-08T12:42:44",
+  "record_count": 6,
+  "records": {
+    "01769f529287134161885217abcdf1accef521b9967acba8f22785dd09585d22": {
+      "candidate_hash": "01769f529287134161885217abcdf1accef521b9967acba8f22785dd09585d22",
+      "candidate_path": "C:\\Users\\mozhihao\\core\\image-hybrid-search\\candidate_library\\图 (3).png",
+      "candidate_name": "图 (3).png",
+      "sample_sequence": 1,
+      "sample_name": "1 (1).png",
+      "group": "A",
+      "reserved_at": "2026-09-08T12:41:29"
+    },
+    "5ca8b4d33ea59176b8e93d0d9d300a5b1cd181e963ed47bff300efbcc86e2714": {
+      "candidate_hash": "5ca8b4d33ea59176b8e93d0d9d300a5b1cd181e963ed47bff300efbcc86e2714",
+      "candidate_path": "C:\\Users\\mozhihao\\core\\image-hybrid-search\\candidate_library\\图 (27).png",
+      "candidate_name": "图 (27).png",
+      "sample_sequence": 1,
+      "sample_name": "1 (1).png",
+      "group": "B",
+      "reserved_at": "2026-09-08T12:41:29"
+    },
+    "93a8b9c8eea221cdadd8a5f449a2b9379f184ba67f2eb10d646fd1386549ee79": {
+      "candidate_hash": "93a8b9c8eea221cdadd8a5f449a2b9379f184ba67f2eb10d646fd1386549ee79",
+      "candidate_path": "C:\\Users\\mozhihao\\core\\image-hybrid-search\\candidate_library\\图76 (4).webp",
+      "candidate_name": "图76 (4).webp",
+      "sample_sequence": 1,
+      "sample_name": "1 (1).png",
+      "group": "C",
+      "reserved_at": "2026-09-08T12:41:29"
+    },
+    "2a5aea00314aa8716747b4a0085706b503f05d8226286dbabcf643663d5ad96c": {
+      "candidate_hash": "2a5aea00314aa8716747b4a0085706b503f05d8226286dbabcf643663d5ad96c",
+      "candidate_path": "C:\\Users\\mozhihao\\core\\image-hybrid-search\\candidate_library\\图 (17).png",
+      "candidate_name": "图 (17).png",
+      "sample_sequence": 1,
+      "sample_name": "1 (1).png",
+      "group": "A",
+      "reserved_at": "2026-09-08T12:42:44"
+    },
+    "34a65d3763f5741ecd4bde64cc7b814ee2ebd7c8f10687c4202a8a6fcfa75b25": {
+      "candidate_hash": "34a65d3763f5741ecd4bde64cc7b814ee2ebd7c8f10687c4202a8a6fcfa75b25",
+      "candidate_path": "C:\\Users\\mozhihao\\core\\image-hybrid-search\\candidate_library\\图 (28).png",
+      "candidate_name": "图 (28).png",
+      "sample_sequence": 1,
+      "sample_name": "1 (1).png",
+      "group": "B",
+      "reserved_at": "2026-09-08T12:42:44"
+    },
+    "909415bee898835537c741c576c7f0d2239fd02b8e5109a6eaa7714a34efbcde": {
+      "candidate_hash": "909415bee898835537c741c576c7f0d2239fd02b8e5109a6eaa7714a34efbcde",
+      "candidate_path": "C:\\Users\\mozhihao\\core\\image-hybrid-search\\candidate_library\\图 (32).png",
+      "candidate_name": "图 (32).png",
+      "sample_sequence": 1,
+      "sample_name": "1 (1).png",
+      "group": "C",
+      "reserved_at": "2026-09-08T12:42:44"
+    }
+  }
+}

@@ -27,7 +27,7 @@ vector_store:
 
 google_vision:
   # 是否启用 Google Vision
-  enabled: true
+  enabled: false
   # Google Cloud 服务账号 JSON 密钥路径
   credentials_path: "C:/projects/baidu_similarity_finder/gcp-key.json"
   # Web Detection 每月免费额度

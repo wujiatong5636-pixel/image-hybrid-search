@@ -5,7 +5,8 @@
 1. 使用SHA-256识别候选图片；
 2. 防止同一图片被不同样图重复使用；
 3. 将占用状态保存到JSON；
-4. 支持程序中断后恢复。
+4. 支持程序中断后恢复；
+5. 方案D：记录候选来源 local/baidu 及百度原始URL。
 """
 
 import hashlib
@@ -158,15 +159,17 @@ class GlobalCandidateRegistry:
         sample_sequence: int,
         sample_name: str,
         group: str,
+        candidate_source: str = "local",
+        candidate_url: Optional[str] = None,
     ) -> bool:
         """
         尝试占用一张候选图片。
 
-        返回True：
-        候选此前没有使用，本次占用成功。
+        返回True：候选此前没有使用，本次占用成功。
+        返回False：候选已经被其他结果使用，本次不再占用。
 
-        返回False：
-        候选已经被其他结果使用，本次不再占用。
+        candidate_source：候选来源 local/baidu；
+        candidate_url：百度候选的原始URL，便于追溯。
         """
         image_path = Path(image_path).resolve()
         image_hash = self.calculate_sha256(image_path)
@@ -174,10 +177,11 @@ class GlobalCandidateRegistry:
         if image_hash in self.records:
             return False
 
-        self.records[image_hash] = {
+        record = {
             "candidate_hash": image_hash,
             "candidate_path": str(image_path),
             "candidate_name": image_path.name,
+            "candidate_source": candidate_source,
             "sample_sequence": sample_sequence,
             "sample_name": sample_name,
             "group": group,
@@ -185,6 +189,9 @@ class GlobalCandidateRegistry:
                 timespec="seconds"
             ),
         }
+        if candidate_url:
+            record["candidate_url"] = candidate_url
+        self.records[image_hash] = record
 
         self.save()
         return True

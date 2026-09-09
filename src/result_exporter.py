@@ -1,4 +1,4 @@
-"""批量结果报告与四宫格预览导出。"""
+"""批量结果报告与四宫格预览导出（方案D：增加候选来源与百度统计字段）。"""
 
 import json
 from pathlib import Path
@@ -26,19 +26,29 @@ def _fit_image(path: Path, size: tuple[int, int]) -> Image.Image:
 
 
 def create_contact_sheet(task: dict, destination: Path) -> None:
-    """制作原图、A、B、C四宫格。"""
+    """制作原图、A、B、C四宫格（标签携带来源 local/baidu）。"""
     canvas = Image.new("RGB", (1600, 1240), "#eeeeee")
     draw = ImageDraw.Draw(canvas)
     title_font = _load_font(34)
-    label_font = _load_font(25)
+    label_font = _load_font(24)
     title = f"{task['sequence']:04d}  {task['source_name']}"
     draw.text((30, 18), title, fill="#111111", font=title_font)
+
+    # 标题右侧标注是否触发百度
+    if task.get("baidu_called"):
+        tag = f"已触发百度 (本地{task.get('local_valid_count', 0)}张/" \
+              f"URL{task.get('baidu_url_count', 0)}/下载{task.get('baidu_downloaded_count', 0)}/" \
+              f"有效{task.get('baidu_valid_count', 0)})"
+        draw.text((760, 26), tag, fill="#c0392b", font=_load_font(22))
+    elif task.get("low_diversity_pool"):
+        draw.text((760, 26), "本地正好3张·低多样性", fill="#b9770e", font=_load_font(22))
 
     items = [("原始样图", Path(task["source_output"]), None)]
     for group in "ABC":
         result = task["results"][group]
+        source = result.get("source", "local")
         label = (
-            f"{group}  CLIP={result['semantic_score']:.4f}  "
+            f"{group} | {source} | CLIP={result['semantic_score']:.4f}  "
             f"MULTI={result.get('multi_feature_score', 0):.4f}  {result.get('category', '')}"
         )
         items.append((label, Path(result["output_path"]), group))
@@ -52,7 +62,11 @@ def create_contact_sheet(task: dict, destination: Path) -> None:
         image_x = x + (770 - fitted.width) // 2
         image_y = y + 15 + (470 - fitted.height) // 2
         canvas.paste(fitted, (image_x, image_y))
-        color = {"A": "#c0392b", "B": "#2471a3", "C": "#1e8449"}.get(group, "#222222")
+        # 百度来源用橙色，本地用分组色
+        if group and task["results"][group].get("source") == "baidu":
+            color = "#d35400"
+        else:
+            color = {"A": "#c0392b", "B": "#2471a3", "C": "#1e8449"}.get(group, "#222222")
         draw.text((x + 20, y + 505), label, fill=color, font=label_font)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -70,10 +84,19 @@ def build_rows(tasks: list[dict]) -> list[dict]:
                     "样图文件": task["source_name"],
                     "样图路径": task["source_path"],
                     "分组": group,
+                    "候选来源": result.get("source", "local"),
+                    "百度原始URL": result.get("source_url"),
+                    "百度原始排名": result.get("source_rank"),
                     "候选原文件": Path(result["candidate_path"]).name,
                     "候选原路径": result["candidate_path"],
                     "输出文件": Path(result["output_path"]).name,
                     "输出路径": result["output_path"],
+                    "是否触发百度": "是" if task.get("baidu_called") else "否",
+                    "本地有效候选数": task.get("local_valid_count"),
+                    "百度返回URL数": task.get("baidu_url_count"),
+                    "百度下载成功数": task.get("baidu_downloaded_count"),
+                    "百度过滤后有效数": task.get("baidu_valid_count"),
+                    "低候选多样性提醒": "是" if task.get("low_diversity_pool") else "否",
                     "CLIP原始分": result["semantic_score"],
                     "pHash距离": result["phash_distance"],
                     "样图类别": task.get("sample_category"),

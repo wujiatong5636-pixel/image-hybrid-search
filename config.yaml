@@ -69,3 +69,87 @@ search:
   clip_text_top_k: 20
   # CLIP 图像检索的默认候选数
   clip_image_top_k: 20
+
+# ===== 方案D：检索提供器配置 =====
+search_provider:
+  primary: "local"          # 主检索：本地CLIP+FAISS
+  fallback: "baidu"         # 降级检索：百度识图
+  fallback_trigger_count: 3 # 本地有效候选少于3张时触发百度
+  local_top_k: 98           # 本地FAISS召回数量
+
+# ===== 百度识图配置 =====
+baidu_image_search:
+  enabled: true
+  mode: "auto"              # auto=HTTP失败自动改用浏览器；http=只用HTTP；browser=只用浏览器
+  timeout: 30               # 单次请求超时（秒）
+  max_results: 30           # 百度最多返回多少个URL
+  max_downloads: 20         # 实际最多下载多少张
+  retries: 1                # 失败重试次数
+  min_interval_seconds: 3   # 两次百度请求之间最小间隔（秒），防止被封
+  circuit_breaker_failures: 3  # 连续失败多少次后熔断（暂时不再调用百度）
+  cache_dir: "runtime/baidu_cache"           # 百度图片缓存目录
+  browser_profile_dir: "runtime/baidu_browser_profile"  # 浏览器数据目录
+
+# ===== 远程图片下载配置 =====
+remote_download:
+  timeout: 15               # 下载超时（秒）
+  retries: 2                # 下载重试次数
+  max_file_mb: 15           # 单文件最大15MB
+  min_width: 200            # 图片最小宽度
+  min_height: 200           # 图片最小高度
+
+# ===== 方案D：检索提供器配置 =====
+search_provider:
+  primary: "local"          # 主检索：本地CLIP+FAISS
+  fallback: "baidu"         # 降级检索：百度识图
+  fallback_trigger_count: 3 # 本地有效候选少于3张时触发百度
+  local_top_k: 98           # 本地FAISS召回数量
+
+# ===== 百度识图配置 =====
+baidu_image_search:
+  enabled: true
+  mode: "auto"              # auto=HTTP失败自动改用浏览器；http=只用HTTP；browser=只用浏览器
+  timeout: 30               # 单次请求超时（秒）
+  max_results: 30           # 百度最多返回多少个URL
+  max_downloads: 20         # 实际最多下载多少张
+  retries: 1                # 失败重试次数
+  min_interval_seconds: 3   # 两次百度请求之间最小间隔（秒），防止被封
+  circuit_breaker_failures: 3  # 连续失败多少次后熔断（暂时不再调用百度）
+  cache_dir: "runtime/baidu_cache"           # 百度图片缓存目录
+  browser_profile_dir: "runtime/baidu_browser_profile"  # 浏览器数据目录
+
+# ===== 远程图片下载配置 =====
+remote_download:
+  timeout: 15               # 下载超时（秒）
+  retries: 2                # 下载重试次数
+  max_file_mb: 15           # 单文件最大15MB
+  min_width: 200            # 图片最小宽度
+  min_height: 200           # 图片最小高度
+
+# ===== 方案D：检索提供器配置 =====
+search_provider:
+  primary: "local"
+  fallback: "baidu"
+  fallback_trigger_count: 3
+  local_top_k: 98
+
+# ===== 百度识图配置 =====
+baidu_image_search:
+  enabled: true
+  mode: "auto"
+  timeout: 30
+  max_results: 30
+  max_downloads: 20
+  retries: 1
+  min_interval_seconds: 3
+  circuit_breaker_failures: 3
+  cache_dir: "runtime/baidu_cache"
+  browser_profile_dir: "runtime/baidu_browser_profile"
+
+# ===== 远程图片下载配置 =====
+remote_download:
+  timeout: 15
+  retries: 2
+  max_file_mb: 15
+  min_width: 200
+  min_height: 200

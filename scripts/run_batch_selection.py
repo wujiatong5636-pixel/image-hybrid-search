@@ -1,8 +1,14 @@
-"""正式批量执行本地 CLIP 候选选择并保存 A、B、C 结果。"""
+"""正式批量执行本地 CLIP 候选选择并保存 A、B、C 结果。
+
+方案D：本地CLIP+FAISS作为唯一主检索；
+全部过滤后本地有效候选少于3张时，才调用百度识图补充；
+百度候选下载到本地后重新执行CLIP和多维评分，不采信百度排名。
+"""
 
 import argparse
 import hashlib
 import json
+import logging
 import re
 import shutil
 import sys
@@ -12,11 +18,22 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.candidate_registry import GlobalCandidateRegistry
+from src.candidate_pool import CandidatePool
 from src.duplicate_detector import DuplicateDetector
 from src.hybrid_searcher import HybridSearcher
 from src.image_classifier import ImageCategoryClassifier, categories_compatible
 from src.multi_feature_scorer import MultiFeatureScorer
+from src.providers.baidu_image_provider import BaiduImageProvider
+from src.providers.local_faiss_provider import LocalFAISSProvider
+from src.remote_candidate_cache import RemoteCandidateCache
 from src.task_store import TaskStore
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("run_batch")
+logger.setLevel(logging.INFO)
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
@@ -51,11 +68,11 @@ def safe_name(name: str) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="正式批量图片基础匹配")
+    parser = argparse.ArgumentParser(description="正式批量图片基础匹配（方案D：本地优先+百度兜底）")
     parser.add_argument("--input_dir", required=True)
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--config", default=str(PROJECT_ROOT / "config.yaml"))
-    parser.add_argument("--top_k", type=int, default=60)
+    parser.add_argument("--top_k", type=int, default=98)
     parser.add_argument(
         "--absolute_min_score",
         type=float,
@@ -69,6 +86,12 @@ def main() -> int:
         help="候选分数至少达到当前第一名的比例",
     )
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--test_local_limit",
+        type=int,
+        default=0,
+        help="测试用：强制限制本地有效候选数量（0表示不限制）",
+    )
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir).resolve()
@@ -111,6 +134,25 @@ def main() -> int:
         return 1
     classifier = ImageCategoryClassifier(searcher.clip)
 
+    # ===== 方案D：初始化检索提供器 =====
+    provider_cfg = searcher.config.get("search_provider", {})
+    fallback_trigger_count = provider_cfg.get("fallback_trigger_count", 3)
+    local_top_k = provider_cfg.get("local_top_k", 98)
+    local_provider = LocalFAISSProvider(searcher.clip, searcher.vector_store)
+    baidu_provider = BaiduImageProvider(searcher.config.get("baidu_image_search", {}))
+    baidu_cfg = searcher.config.get("baidu_image_search", {})
+    remote_cfg = searcher.config.get("remote_download", {})
+    remote_cache = RemoteCandidateCache(
+        cache_dir=baidu_cfg.get("cache_dir", "runtime/baidu_cache"),
+        timeout=remote_cfg.get("timeout", 15),
+        retries=remote_cfg.get("retries", 2),
+        max_file_mb=remote_cfg.get("max_file_mb", 15),
+        min_width=remote_cfg.get("min_width", 200),
+        min_height=remote_cfg.get("min_height", 200),
+    )
+    candidate_pool = CandidatePool(detector, registry)
+    baidu_max_downloads = baidu_cfg.get("max_downloads", 20)
+
     completed = 0
     skipped = 0
     failed = 0
@@ -135,26 +177,35 @@ def main() -> int:
             },
         )
 
+        # 统计字段初始化（保证异常分支也能引用）
+        baidu_called = False
+        baidu_url_count = 0
+        baidu_downloaded_count = 0
+        baidu_valid_count = 0
+        local_valid_count = 0
+        low_diversity_pool = False
+        category_rejected = 0
+        effective_min_score = args.absolute_min_score
+
         try:
             query_vector = searcher.clip.encode_image(sample_path)
             sample_prediction = classifier.classify_embedding(query_vector)
             sample_category = sample_prediction["category"]
-            raw_results = searcher.vector_store.search(
-                query_vector,
-                top_k=args.top_k,
-                threshold=0.0,
-            )
+
+            # ===== 1. 本地FAISS检索 =====
+            raw_local = local_provider.search(str(sample_path), top_k=local_top_k)
+
+            # ===== 2. 本地候选五道过滤：路径/全局占用/pHash重复/类别/（质量门槛稍后） =====
             candidates = []
-            category_rejected = 0
-            for candidate_text, score, internal_id in raw_results:
-                candidate_path = Path(candidate_text).resolve()
+            for cand in raw_local:
+                candidate_path = Path(cand.local_path).resolve()
                 if not candidate_path.is_file() or registry.is_used(candidate_path):
                     continue
                 check = detector.compare(sample_path, candidate_path)
                 if check["is_duplicate"]:
                     continue
                 try:
-                    candidate_vector = searcher.vector_store.index.reconstruct(internal_id)
+                    candidate_vector = searcher.vector_store.index.reconstruct(cand.internal_id)
                 except Exception:
                     candidate_vector = searcher.clip.encode_image(candidate_path)
                 candidate_prediction = classifier.classify_embedding(candidate_vector)
@@ -165,36 +216,120 @@ def main() -> int:
                 candidates.append(
                     {
                         "path": str(candidate_path),
-                        "internal_id": internal_id,
-                        "semantic_score": float(score),
+                        "internal_id": cand.internal_id,
+                        "semantic_score": cand.source_score or 0.0,
                         "phash_distance": int(check["phash_distance"]),
                         "is_duplicate": False,
                         "category": candidate_category,
                         "category_score": float(candidate_prediction["score"]),
+                        "source": "local",
+                        "source_url": None,
+                        "source_rank": cand.source_rank,
                     }
                 )
 
+            # 测试用：强制限制本地候选数量
+            if args.test_local_limit > 0:
+                candidates = candidates[:args.test_local_limit]
+
+            # 动态质量门槛
+            if candidates:
+                best_score = max(item["semantic_score"] for item in candidates)
+                effective_min_score = max(
+                    args.absolute_min_score,
+                    best_score * args.relative_min_ratio,
+                )
+                candidates = [
+                    item
+                    for item in candidates
+                    if item["semantic_score"] >= effective_min_score
+                ]
+
+            local_valid_count = len(candidates)
+            print(f"    本地有效候选：{local_valid_count} 张（质量门槛={effective_min_score:.4f}）")
+
+            # ===== 3. 判断是否触发百度（关键：按过滤后数量判断） =====
+            if local_valid_count < fallback_trigger_count:
+                baidu_called = True
+                missing_count = fallback_trigger_count - local_valid_count
+                download_target = max(10, missing_count * 5)
+                print(f"    本地不足{fallback_trigger_count}张（缺{missing_count}），触发百度识图，计划下载{download_target}张……")
+
+                try:
+                    # 3.1 百度搜索URL
+                    baidu_raw = baidu_provider.search(str(sample_path), top_k=baidu_cfg.get("max_results", 30))
+                    baidu_url_count = len(baidu_raw)
+                    print(f"    百度返回URL：{baidu_url_count} 个")
+
+                    if baidu_raw:
+                        urls = [c.source_url for c in baidu_raw if c.source_url]
+                        download_results = remote_cache.download_batch(
+                            urls,
+                            max_downloads=min(download_target, baidu_max_downloads),
+                        )
+                        baidu_downloaded_count = len(download_results)
+                        print(f"    百度下载成功：{baidu_downloaded_count} 张")
+
+                        # 3.2 百度候选重新评分（不采信百度排名）
+                        baidu_candidates = []
+                        for rank, dl in enumerate(download_results, start=1):
+                            dl_path = dl["local_path"]
+                            try:
+                                dl_vector = searcher.clip.encode_image(dl_path)
+                                dl_score = float(searcher.clip.similarity(query_vector, dl_vector))
+                                dl_pred = classifier.classify_embedding(dl_vector)
+                                if not categories_compatible(sample_category, dl_pred["category"]):
+                                    continue
+                                if dl_score < effective_min_score:
+                                    continue
+                                baidu_candidates.append(
+                                    {
+                                        "path": dl_path,
+                                        "semantic_score": dl_score,
+                                        "phash_distance": 0,
+                                        "is_duplicate": False,
+                                        "category": dl_pred["category"],
+                                        "category_score": float(dl_pred["score"]),
+                                        "source": "baidu",
+                                        "source_url": dl["url"],
+                                        "source_rank": rank,
+                                    }
+                                )
+                            except Exception as e:
+                                logger.warning("百度候选评分失败 %s: %s", dl_path, e)
+                                continue
+
+                        baidu_valid_count = len(baidu_candidates)
+                        print(f"    百度过滤后有效：{baidu_valid_count} 张")
+
+                        # 3.3 合并去重（本地优先）
+                        if baidu_candidates:
+                            candidates = candidate_pool.merge_and_deduplicate(
+                                str(sample_path), candidates, baidu_candidates
+                            )
+                            print(f"    合并去重后总候选：{len(candidates)} 张")
+
+                except Exception as e:
+                    # 百度整体失败不崩溃，继续使用本地候选
+                    print(f"    [警告] 百度识图调用失败：{e}，继续使用本地候选")
+            else:
+                # 本地正好等于阈值时，标记低多样性提醒
+                if local_valid_count == fallback_trigger_count:
+                    low_diversity_pool = True
+                    print(f"    本地候选正好{fallback_trigger_count}张，未调用百度（低多样性提醒）")
+
             if not candidates:
-                raise RuntimeError("重复过滤后没有可用候选")
+                raise RuntimeError("过滤后没有可用候选（本地和百度均无有效结果）")
 
-            best_score = max(item["semantic_score"] for item in candidates)
-            effective_min_score = max(
-                args.absolute_min_score,
-                best_score * args.relative_min_ratio,
-            )
-            candidates = [
-                item
-                for item in candidates
-                if item["semantic_score"] >= effective_min_score
-            ]
-
+            # ===== 4. A/B/C多维评分选择 =====
             selected = selector.select(sample_path, candidates)
             if any(selected[group] is None for group in ("A", "B", "C")):
                 raise RuntimeError(
                     f"质量门槛={effective_min_score:.4f}，"
-                    f"过滤后只有{len(candidates)}张合格候选，无法输出3张"
+                    f"最终只有{len(candidates)}张合格候选，无法输出3张"
                 )
 
+            # ===== 5. 全局占用并输出 =====
             sample_output = output_dir / f"{sequence:04d}_{safe_name(sample_path.name)}"
             sample_output.mkdir(parents=True, exist_ok=True)
             source_output = sample_output / f"source{sample_path.suffix.lower()}"
@@ -211,6 +346,8 @@ def main() -> int:
                         sample_sequence=sequence,
                         sample_name=sample_path.name,
                         group=group,
+                        candidate_source=item.get("source", "local"),
+                        candidate_url=item.get("source_url"),
                     ):
                         raise RuntimeError(f"{group}组候选发生全局占用冲突")
                     reserved_paths.append(candidate_path)
@@ -219,6 +356,9 @@ def main() -> int:
                     saved_results[group] = {
                         "candidate_path": str(candidate_path),
                         "output_path": str(destination.resolve()),
+                        "source": item.get("source", "local"),
+                        "source_url": item.get("source_url"),
+                        "source_rank": item.get("source_rank"),
                         "semantic_score": round(item["semantic_score"], 6),
                         "phash_distance": item["phash_distance"],
                         "category": item["category"],
@@ -246,15 +386,26 @@ def main() -> int:
                     "sample_category_score": round(sample_prediction["score"], 6),
                     "category_rejected": category_rejected,
                     "effective_min_score": round(effective_min_score, 6),
+                    "baidu_called": baidu_called,
+                    "baidu_url_count": baidu_url_count,
+                    "baidu_downloaded_count": baidu_downloaded_count,
+                    "baidu_valid_count": baidu_valid_count,
+                    "local_valid_count": local_valid_count,
+                    "low_diversity_pool": low_diversity_pool,
                     "results": saved_results,
                 },
             )
             completed += 1
+            source_tags = {
+                g: saved_results[g]["source"] for g in ("A", "B", "C")
+            }
             print(
-                f"    完成：A={Path(saved_results['A']['candidate_path']).name} | "
-                f"B={Path(saved_results['B']['candidate_path']).name} | "
-                f"C={Path(saved_results['C']['candidate_path']).name}"
+                f"    完成：A={Path(saved_results['A']['candidate_path']).name}[{source_tags['A']}] | "
+                f"B={Path(saved_results['B']['candidate_path']).name}[{source_tags['B']}] | "
+                f"C={Path(saved_results['C']['candidate_path']).name}[{source_tags['C']}]"
             )
+            if low_diversity_pool:
+                print("    [提醒] 本地候选正好3张，A/B/C分组空间较小，请人工复核")
         except Exception as error:
             failed += 1
             task_store.update(
@@ -263,8 +414,13 @@ def main() -> int:
                     "sequence": sequence,
                     "source_name": sample_path.name,
                     "source_path": str(sample_path),
-                    "status": "retryable_error",
+                    "status": "insufficient_candidates" if "无法输出3张" in str(error) or "没有可用候选" in str(error) else "retryable_error",
                     "error": str(error),
+                    "baidu_called": baidu_called,
+                    "baidu_url_count": baidu_url_count,
+                    "baidu_downloaded_count": baidu_downloaded_count,
+                    "baidu_valid_count": baidu_valid_count,
+                    "local_valid_count": local_valid_count,
                     "results": {},
                 },
             )

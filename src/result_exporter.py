@@ -1,4 +1,4 @@
-"""批量结果报告与四宫格预览导出（方案D：增加候选来源与百度统计字段）。"""
+"""批量结果报告与四宫格预览导出，记录本地、百度和Google来源。"""
 
 import json
 from pathlib import Path
@@ -26,7 +26,7 @@ def _fit_image(path: Path, size: tuple[int, int]) -> Image.Image:
 
 
 def create_contact_sheet(task: dict, destination: Path) -> None:
-    """制作原图、A、B、C四宫格（标签携带来源 local/baidu）。"""
+    """制作原图、A、B、C四宫格（标签携带候选来源）。"""
     canvas = Image.new("RGB", (1600, 1240), "#eeeeee")
     draw = ImageDraw.Draw(canvas)
     title_font = _load_font(34)
@@ -40,6 +40,9 @@ def create_contact_sheet(task: dict, destination: Path) -> None:
               f"URL{task.get('baidu_url_count', 0)}/下载{task.get('baidu_downloaded_count', 0)}/" \
               f"有效{task.get('baidu_valid_count', 0)})"
         draw.text((760, 26), tag, fill="#c0392b", font=_load_font(22))
+    if task.get("google_called"):
+        tag = f"Google {task.get('google_status', 'unknown')} (有效{task.get('google_valid_count', 0)})"
+        draw.text((760, 52), tag, fill="#7d3c98", font=_load_font(20))
     elif task.get("low_diversity_pool"):
         draw.text((760, 26), "本地正好3张·低多样性", fill="#b9770e", font=_load_font(22))
 
@@ -62,9 +65,12 @@ def create_contact_sheet(task: dict, destination: Path) -> None:
         image_x = x + (770 - fitted.width) // 2
         image_y = y + 15 + (470 - fitted.height) // 2
         canvas.paste(fitted, (image_x, image_y))
-        # 百度来源用橙色，本地用分组色
-        if group and task["results"][group].get("source") == "baidu":
+        # 网络来源使用独立颜色，本地使用分组色
+        source = task["results"][group].get("source") if group else "local"
+        if source == "baidu":
             color = "#d35400"
+        elif source == "google":
+            color = "#7d3c98"
         else:
             color = {"A": "#c0392b", "B": "#2471a3", "C": "#1e8449"}.get(group, "#222222")
         draw.text((x + 20, y + 505), label, fill=color, font=label_font)
@@ -85,8 +91,8 @@ def build_rows(tasks: list[dict]) -> list[dict]:
                     "样图路径": task["source_path"],
                     "分组": group,
                     "候选来源": result.get("source", "local"),
-                    "百度原始URL": result.get("source_url"),
-                    "百度原始排名": result.get("source_rank"),
+                    "网络原始URL": result.get("source_url"),
+                    "来源原始排名": result.get("source_rank"),
                     "候选原文件": Path(result["candidate_path"]).name,
                     "候选原路径": result["candidate_path"],
                     "输出文件": Path(result["output_path"]).name,
@@ -96,6 +102,11 @@ def build_rows(tasks: list[dict]) -> list[dict]:
                     "百度返回URL数": task.get("baidu_url_count"),
                     "百度下载成功数": task.get("baidu_downloaded_count"),
                     "百度过滤后有效数": task.get("baidu_valid_count"),
+                    "是否触发Google": "是" if task.get("google_called") else "否",
+                    "Google状态": task.get("google_status"),
+                    "Google返回URL数": task.get("google_url_count"),
+                    "Google下载成功数": task.get("google_downloaded_count"),
+                    "Google过滤后有效数": task.get("google_valid_count"),
                     "低候选多样性提醒": "是" if task.get("low_diversity_pool") else "否",
                     "CLIP原始分": result["semantic_score"],
                     "pHash距离": result["phash_distance"],

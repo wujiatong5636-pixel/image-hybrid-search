@@ -6,7 +6,7 @@
 2. 防止同一图片被不同样图重复使用；
 3. 将占用状态保存到JSON；
 4. 支持程序中断后恢复；
-5. 方案D：记录候选来源 local/baidu 及百度原始URL。
+5. 记录候选来源 local/baidu/google 及网络原始URL。
 """
 
 import hashlib
@@ -168,8 +168,8 @@ class GlobalCandidateRegistry:
         返回True：候选此前没有使用，本次占用成功。
         返回False：候选已经被其他结果使用，本次不再占用。
 
-        candidate_source：候选来源 local/baidu；
-        candidate_url：百度候选的原始URL，便于追溯。
+        candidate_source：候选来源 local/baidu/google；
+        candidate_url：网络候选的原始URL，便于追溯。
         """
         image_path = Path(image_path).resolve()
         image_hash = self.calculate_sha256(image_path)

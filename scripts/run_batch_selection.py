@@ -1,8 +1,8 @@
 """正式批量执行本地 CLIP 候选选择并保存 A、B、C 结果。
 
-方案D：本地CLIP+FAISS作为唯一主检索；
-全部过滤后本地有效候选少于3张时，才调用百度识图补充；
-百度候选下载到本地后重新执行CLIP和多维评分，不采信百度排名。
+1.2版：本地CLIP+FAISS作为主检索；本地不足3张时调用百度；
+百度不可用、无结果或过滤后仍不足3张时，再调用Google Vision；
+所有网络候选下载到本地后重新执行CLIP和多维评分，不采信网络排名。
 """
 
 import argparse
@@ -20,10 +20,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.candidate_registry import GlobalCandidateRegistry
 from src.candidate_pool import CandidatePool
 from src.duplicate_detector import DuplicateDetector
+from src.fallback_policy import needs_fallback
 from src.hybrid_searcher import HybridSearcher
 from src.image_classifier import ImageCategoryClassifier, categories_compatible
 from src.multi_feature_scorer import MultiFeatureScorer
 from src.providers.baidu_image_provider import BaiduImageProvider
+from src.providers.google_vision_provider import GoogleVisionProvider
 from src.providers.local_faiss_provider import LocalFAISSProvider
 from src.remote_candidate_cache import RemoteCandidateCache
 from src.task_store import TaskStore
@@ -67,8 +69,51 @@ def safe_name(name: str) -> str:
     return value or "sample"
 
 
+def score_remote_candidates(
+    raw_candidates,
+    remote_cache,
+    max_downloads,
+    searcher,
+    query_vector,
+    classifier,
+    sample_category,
+    effective_min_score,
+    source,
+):
+    """下载网络候选并使用本地模型统一评分和过滤。"""
+    urls = [item.source_url for item in raw_candidates if item.source_url]
+    downloads = remote_cache.download_batch(urls, max_downloads=max_downloads)
+    candidates = []
+    for rank, item in enumerate(downloads, start=1):
+        path = item["local_path"]
+        try:
+            vector = searcher.clip.encode_image(path)
+            score = float(searcher.clip.similarity(query_vector, vector))
+            prediction = classifier.classify_embedding(vector)
+            if not categories_compatible(sample_category, prediction["category"]):
+                continue
+            if score < effective_min_score:
+                continue
+            candidates.append(
+                {
+                    "path": path,
+                    "semantic_score": score,
+                    "phash_distance": 0,
+                    "is_duplicate": False,
+                    "category": prediction["category"],
+                    "category_score": float(prediction["score"]),
+                    "source": source,
+                    "source_url": item["url"],
+                    "source_rank": rank,
+                }
+            )
+        except Exception as error:
+            logger.warning("%s候选评分失败 %s: %s", source, path, error)
+    return candidates, len(downloads)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="正式批量图片基础匹配（方案D：本地优先+百度兜底）")
+    parser = argparse.ArgumentParser(description="正式批量图片匹配（本地→百度→Google）")
     parser.add_argument("--input_dir", required=True)
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--config", default=str(PROJECT_ROOT / "config.yaml"))
@@ -134,16 +179,22 @@ def main() -> int:
         return 1
     classifier = ImageCategoryClassifier(searcher.clip)
 
-    # ===== 方案D：初始化检索提供器 =====
+    # ===== 1.2版：初始化三级检索提供器 =====
     provider_cfg = searcher.config.get("search_provider", {})
     fallback_trigger_count = provider_cfg.get("fallback_trigger_count", 3)
     local_top_k = provider_cfg.get("local_top_k", 98)
     local_provider = LocalFAISSProvider(searcher.clip, searcher.vector_store)
     baidu_provider = BaiduImageProvider(searcher.config.get("baidu_image_search", {}))
     baidu_cfg = searcher.config.get("baidu_image_search", {})
+    google_cfg = searcher.config.get("google_fallback", {})
+    google_provider = GoogleVisionProvider(
+        searcher.vision,
+        searcher.rate_limiter,
+        google_cfg,
+    )
     remote_cfg = searcher.config.get("remote_download", {})
     remote_cache = RemoteCandidateCache(
-        cache_dir=baidu_cfg.get("cache_dir", "runtime/baidu_cache"),
+        cache_dir=remote_cfg.get("cache_dir", "runtime/remote_candidate_cache"),
         timeout=remote_cfg.get("timeout", 15),
         retries=remote_cfg.get("retries", 2),
         max_file_mb=remote_cfg.get("max_file_mb", 15),
@@ -152,6 +203,7 @@ def main() -> int:
     )
     candidate_pool = CandidatePool(detector, registry)
     baidu_max_downloads = baidu_cfg.get("max_downloads", 20)
+    google_max_downloads = google_cfg.get("max_downloads", 20)
 
     completed = 0
     skipped = 0
@@ -182,6 +234,11 @@ def main() -> int:
         baidu_url_count = 0
         baidu_downloaded_count = 0
         baidu_valid_count = 0
+        google_called = False
+        google_status = "not_called"
+        google_url_count = 0
+        google_downloaded_count = 0
+        google_valid_count = 0
         local_valid_count = 0
         low_diversity_pool = False
         category_rejected = 0
@@ -248,61 +305,33 @@ def main() -> int:
             local_valid_count = len(candidates)
             print(f"    本地有效候选：{local_valid_count} 张（质量门槛={effective_min_score:.4f}）")
 
-            # ===== 3. 判断是否触发百度（关键：按过滤后数量判断） =====
-            if local_valid_count < fallback_trigger_count:
+            # ===== 3. 本地不足时先百度，百度补充后仍不足再Google =====
+            if needs_fallback(local_valid_count, fallback_trigger_count):
                 baidu_called = True
                 missing_count = fallback_trigger_count - local_valid_count
                 download_target = max(10, missing_count * 5)
                 print(f"    本地不足{fallback_trigger_count}张（缺{missing_count}），触发百度识图，计划下载{download_target}张……")
 
                 try:
-                    # 3.1 百度搜索URL
                     baidu_raw = baidu_provider.search(str(sample_path), top_k=baidu_cfg.get("max_results", 30))
                     baidu_url_count = len(baidu_raw)
                     print(f"    百度返回URL：{baidu_url_count} 个")
 
                     if baidu_raw:
-                        urls = [c.source_url for c in baidu_raw if c.source_url]
-                        download_results = remote_cache.download_batch(
-                            urls,
+                        baidu_candidates, baidu_downloaded_count = score_remote_candidates(
+                            baidu_raw,
+                            remote_cache,
                             max_downloads=min(download_target, baidu_max_downloads),
+                            searcher=searcher,
+                            query_vector=query_vector,
+                            classifier=classifier,
+                            sample_category=sample_category,
+                            effective_min_score=effective_min_score,
+                            source="baidu",
                         )
-                        baidu_downloaded_count = len(download_results)
                         print(f"    百度下载成功：{baidu_downloaded_count} 张")
-
-                        # 3.2 百度候选重新评分（不采信百度排名）
-                        baidu_candidates = []
-                        for rank, dl in enumerate(download_results, start=1):
-                            dl_path = dl["local_path"]
-                            try:
-                                dl_vector = searcher.clip.encode_image(dl_path)
-                                dl_score = float(searcher.clip.similarity(query_vector, dl_vector))
-                                dl_pred = classifier.classify_embedding(dl_vector)
-                                if not categories_compatible(sample_category, dl_pred["category"]):
-                                    continue
-                                if dl_score < effective_min_score:
-                                    continue
-                                baidu_candidates.append(
-                                    {
-                                        "path": dl_path,
-                                        "semantic_score": dl_score,
-                                        "phash_distance": 0,
-                                        "is_duplicate": False,
-                                        "category": dl_pred["category"],
-                                        "category_score": float(dl_pred["score"]),
-                                        "source": "baidu",
-                                        "source_url": dl["url"],
-                                        "source_rank": rank,
-                                    }
-                                )
-                            except Exception as e:
-                                logger.warning("百度候选评分失败 %s: %s", dl_path, e)
-                                continue
-
                         baidu_valid_count = len(baidu_candidates)
                         print(f"    百度过滤后有效：{baidu_valid_count} 张")
-
-                        # 3.3 合并去重（本地优先）
                         if baidu_candidates:
                             candidates = candidate_pool.merge_and_deduplicate(
                                 str(sample_path), candidates, baidu_candidates
@@ -310,8 +339,46 @@ def main() -> int:
                             print(f"    合并去重后总候选：{len(candidates)} 张")
 
                 except Exception as e:
-                    # 百度整体失败不崩溃，继续使用本地候选
-                    print(f"    [警告] 百度识图调用失败：{e}，继续使用本地候选")
+                    print(f"    [警告] 百度识图调用失败：{e}")
+
+                if needs_fallback(len(candidates), fallback_trigger_count):
+                    google_called = True
+                    print(f"    百度补充后仍只有{len(candidates)}张，触发Google Vision……")
+                    try:
+                        google_raw = google_provider.search(
+                            str(sample_path),
+                            top_k=google_cfg.get("max_results", 30),
+                        )
+                        google_status = google_provider.last_status
+                        google_url_count = len(google_raw)
+                        print(f"    Google状态：{google_status}，返回URL：{google_url_count} 个")
+                        if google_raw:
+                            missing_count = fallback_trigger_count - len(candidates)
+                            download_target = max(10, missing_count * 5)
+                            google_candidates, google_downloaded_count = score_remote_candidates(
+                                google_raw,
+                                remote_cache,
+                                max_downloads=min(download_target, google_max_downloads),
+                                searcher=searcher,
+                                query_vector=query_vector,
+                                classifier=classifier,
+                                sample_category=sample_category,
+                                effective_min_score=effective_min_score,
+                                source="google",
+                            )
+                            google_valid_count = len(google_candidates)
+                            print(
+                                f"    Google下载成功：{google_downloaded_count} 张，"
+                                f"过滤后有效：{google_valid_count} 张"
+                            )
+                            if google_candidates:
+                                candidates = candidate_pool.merge_and_deduplicate(
+                                    str(sample_path), candidates, google_candidates
+                                )
+                                print(f"    Google合并去重后总候选：{len(candidates)} 张")
+                    except Exception as error:
+                        google_status = "error"
+                        print(f"    [警告] Google Vision调用失败：{error}")
             else:
                 # 本地正好等于阈值时，标记低多样性提醒
                 if local_valid_count == fallback_trigger_count:
@@ -319,7 +386,7 @@ def main() -> int:
                     print(f"    本地候选正好{fallback_trigger_count}张，未调用百度（低多样性提醒）")
 
             if not candidates:
-                raise RuntimeError("过滤后没有可用候选（本地和百度均无有效结果）")
+                raise RuntimeError("过滤后没有可用候选（本地、百度和Google均无有效结果）")
 
             # ===== 4. A/B/C多维评分选择 =====
             selected = selector.select(sample_path, candidates)
@@ -390,6 +457,11 @@ def main() -> int:
                     "baidu_url_count": baidu_url_count,
                     "baidu_downloaded_count": baidu_downloaded_count,
                     "baidu_valid_count": baidu_valid_count,
+                    "google_called": google_called,
+                    "google_status": google_status,
+                    "google_url_count": google_url_count,
+                    "google_downloaded_count": google_downloaded_count,
+                    "google_valid_count": google_valid_count,
                     "local_valid_count": local_valid_count,
                     "low_diversity_pool": low_diversity_pool,
                     "results": saved_results,
@@ -420,6 +492,11 @@ def main() -> int:
                     "baidu_url_count": baidu_url_count,
                     "baidu_downloaded_count": baidu_downloaded_count,
                     "baidu_valid_count": baidu_valid_count,
+                    "google_called": google_called,
+                    "google_status": google_status,
+                    "google_url_count": google_url_count,
+                    "google_downloaded_count": google_downloaded_count,
+                    "google_valid_count": google_valid_count,
                     "local_valid_count": local_valid_count,
                     "results": {},
                 },

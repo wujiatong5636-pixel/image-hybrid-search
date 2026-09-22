@@ -1,6 +1,6 @@
 """
 统一候选数据结构定义。
-无论候选来自本地还是百度，进入后续评分前都必须转换成这个格式。
+无论候选来自本地、百度还是 Google，进入后续评分前都必须转换成这个格式。
 """
 from dataclasses import dataclass
 from typing import Optional
@@ -9,11 +9,11 @@ from typing import Optional
 @dataclass
 class Candidate:
     """统一候选数据结构。"""
-    # 来源标识："local" 或 "baidu"
+    # 来源标识："local"、"baidu" 或 "google"
     source: str
     # 来源ID：本地为文件路径，百度为原始URL
     source_id: str
-    # 百度原始URL（本地候选为None）
+    # 网络候选原始URL（本地候选为None）
     source_url: Optional[str] = None
     # 本地文件路径（百度候选下载后的缓存路径）
     local_path: str = ""

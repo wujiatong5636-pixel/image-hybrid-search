@@ -1,5 +1,7 @@
 # 方案 D 落地部署指南（小白版）
 
+> **历史文档提示：** 本文记录的是 v1.1“本地 → 百度”方案。v1.2 已升级为“本地 CLIP‑FAISS → 百度 → Google Vision”，请以 `config.yaml`、`scripts/run_batch_selection.py` 和 README 的当前说明为准。
+
 > 本文档面向非专业开发者，每一步都有
 > **复制粘贴的命令**
 > 和

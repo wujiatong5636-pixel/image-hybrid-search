@@ -1,6 +1,6 @@
 """
 候选池合并与去重模块。
-负责把本地候选和百度候选合并，执行两层去重：
+负责把现有候选和新增候选合并，执行两层去重：
   1. 和样图比较（完全重复/近重复）
   2. 候选之间互相比较（SHA256相同/pHash过小/全局占用）
 
@@ -29,7 +29,7 @@ class CandidatePool:
         self,
         sample_path: str,
         local_candidates: List[dict],
-        baidu_candidates: List[dict],
+        new_candidates: List[dict],
     ) -> List[dict]:
         """
         合并本地和百度候选，执行去重。
@@ -37,7 +37,7 @@ class CandidatePool:
         Args:
             sample_path: 样图路径
             local_candidates: 本地候选列表（已过滤）
-            baidu_candidates: 百度候选列表（已下载、已重新评分）
+            new_candidates: 百度或 Google 候选列表（已下载、已重新评分）
 
         Returns:
             去重后的合并候选列表
@@ -46,16 +46,16 @@ class CandidatePool:
 
         # 第一层：和样图去重
         local_candidates = self._filter_against_sample(sample_path, local_candidates)
-        baidu_candidates = self._filter_against_sample(sample_path, baidu_candidates)
+        new_candidates = self._filter_against_sample(sample_path, new_candidates)
 
         # 合并：本地候选在前（优先级高）
-        all_candidates = local_candidates + baidu_candidates
+        all_candidates = local_candidates + new_candidates
 
         # 第二层：候选之间去重
         result = self._deduplicate_among_candidates(all_candidates)
 
-        logger.info("候选池合并完成: 本地%d + 百度%d -> 合并后%d",
-                     len(local_candidates), len(baidu_candidates), len(result))
+        logger.info("候选池合并完成: 现有%d + 新增%d -> 合并后%d",
+                     len(local_candidates), len(new_candidates), len(result))
         return result
 
     def _filter_against_sample(self, sample_path: str, candidates: List[dict]) -> List[dict]:

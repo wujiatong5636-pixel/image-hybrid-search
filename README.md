@@ -1,6 +1,8 @@
 # 混合图片检索系统 (Image Hybrid Search)
 
-基于 **Google Vision Web Detection**（全网图片溯源）+ **CLIP**（私有库语义检索）的混合图片检索系统，通过加权求和或 RRF 融合实现互补增强。
+基于 **CLIP + FAISS** 的本地主检索系统。正式批处理采用三级降级链路：本地有效候选不足 3 张时调用百度识图；百度不可用、无结果或过滤后仍不足 3 张时，才调用 **Google Vision Web Detection**。所有网络候选都会下载到本地并重新执行 CLIP、类别和重复度过滤。
+
+> 当前稳定版本方向：`local → baidu → google`。Google 只作为最终补充，不参与本地候选充足时的检索。
 
 ## 架构概览
 
